@@ -1,0 +1,335 @@
+openapi: 3.0.3
+info:
+  title: Book Screenshot Extraction API
+  version: 0.1.0
+  description: >
+    Backend API that accepts an image (photo/screenshot of a book page) and returns
+    extracted text/layout blocks and cropped figures/diagrams. This spec defines the
+    contract for contract-first TDD. Implementation may improve extraction quality
+    over time without breaking this contract.
+servers:
+  - url: http://localhost:8000
+tags:
+  - name: system
+    description: System endpoints
+  - name: extraction
+    description: Extraction endpoints
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                ok:
+                  value:
+                    status: ok
+
+  /extract:
+    post:
+      tags: [extraction]
+      summary: Extract text blocks and diagrams from a book page image
+      operationId: extractFromImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ExtractRequest"
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+      responses:
+        "200":
+          description: Extraction result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractResponse"
+              examples:
+                minimal:
+                  value:
+                    meta:
+                      request_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                      image:
+                        width: 3024
+                        height: 4032
+                      timings_ms:
+                        preprocess: 40
+                        layout: 0
+                        ocr: 0
+                        crop: 0
+                    blocks: []
+                    figures: []
+                    exports:
+                      annotated_image_path: null
+        "400":
+          description: Bad request (non-image upload, corrupt/unsupported image, missing file)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                nonImage:
+                  value:
+                    detail: Only image uploads are supported.
+                invalidImage:
+                  value:
+                    detail: Invalid image file.
+        "422":
+          description: Validation error (e.g., wrong form field type)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        "500":
+          description: Unexpected server error during extraction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                extractionFailed:
+                  value:
+                    detail: "Extraction failed: model inference error"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ExtractRequest:
+      type: object
+      additionalProperties: false
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Image file of a single book page (jpg/png/webp).
+        store_outputs:
+          type: boolean
+          default: true
+          description: If true, store outputs under /outputs/<request_id>/.
+        return_annotated:
+          type: boolean
+          default: true
+          description: >
+            If true and store_outputs is true, generate an annotated preview image and set
+            exports.annotated_image_path.
+        ocr_engine:
+          type: string
+          default: paddle
+          enum: [paddle, doctr, tesseract]
+          description: OCR engine to use.
+        layout_engine:
+          type: string
+          default: detectron2
+          enum: [detectron2, none]
+          description: Layout detection engine to use (none disables layout for early phases).
+
+    ExtractResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, blocks, figures, exports]
+      properties:
+        meta:
+          $ref: "#/components/schemas/Meta"
+        blocks:
+          type: array
+          description: Detected layout/text blocks on the page.
+          items:
+            $ref: "#/components/schemas/Block"
+        figures:
+          type: array
+          description: Cropped diagrams/figures detected on the page.
+          items:
+            $ref: "#/components/schemas/Figure"
+        exports:
+          $ref: "#/components/schemas/Exports"
+
+    Meta:
+      type: object
+      additionalProperties: false
+      required: [request_id, image, timings_ms]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Unique request identifier for this extraction run.
+        image:
+          $ref: "#/components/schemas/ImageMeta"
+        timings_ms:
+          $ref: "#/components/schemas/Timings"
+
+    ImageMeta:
+      type: object
+      additionalProperties: false
+      required: [width, height]
+      properties:
+        width:
+          type: integer
+          minimum: 1
+          description: Image width in pixels (processed image space).
+        height:
+          type: integer
+          minimum: 1
+          description: Image height in pixels (processed image space).
+
+    Timings:
+      type: object
+      additionalProperties: false
+      required: [preprocess, layout, ocr, crop]
+      properties:
+        preprocess:
+          type: integer
+          minimum: 0
+          description: Preprocess stage time in milliseconds.
+        layout:
+          type: integer
+          minimum: 0
+          description: Layout detection stage time in milliseconds.
+        ocr:
+          type: integer
+          minimum: 0
+          description: OCR stage time in milliseconds.
+        crop:
+          type: integer
+          minimum: 0
+          description: Figure cropping stage time in milliseconds.
+
+    Block:
+      type: object
+      additionalProperties: false
+      required: [id, type, bbox, order, text, confidence, lines]
+      properties:
+        id:
+          type: string
+          description: Block identifier unique within the response.
+          examples: ["b1"]
+        type:
+          type: string
+          enum: [title, text, list, table, figure]
+          description: Block type classified by layout detection.
+        bbox:
+          type: array
+          description: Bounding box [x1, y1, x2, y2] in pixel coordinates (processed image space).
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+            minimum: 0
+        order:
+          type: integer
+          minimum: 1
+          description: Best-effort 1-based reading order.
+        text:
+          type: string
+          description: Extracted text for this block (may be empty for figure blocks).
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Confidence score for the block classification/text (best-effort).
+        lines:
+          type: array
+          description: Line-level OCR results within the block (may be empty).
+          items:
+            $ref: "#/components/schemas/Line"
+
+    Line:
+      type: object
+      additionalProperties: false
+      required: [bbox, text, confidence]
+      properties:
+        bbox:
+          type: array
+          description: Line bounding box [x1, y1, x2, y2] in pixel coordinates (processed image space).
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+            minimum: 0
+        text:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    Figure:
+      type: object
+      additionalProperties: false
+      required: [id, bbox, image_path, caption, confidence]
+      properties:
+        id:
+          type: string
+          description: Figure identifier unique within the response.
+          examples: ["f1"]
+        bbox:
+          type: array
+          description: Bounding box [x1, y1, x2, y2] in pixel coordinates (processed image space).
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+            minimum: 0
+        image_path:
+          type: string
+          description: >
+            Relative path to the cropped figure image, typically under /outputs/<request_id>/...
+            Present even if the file is not stored (implementation may return a placeholder path when store_outputs=false).
+        caption:
+          type: string
+          nullable: true
+          description: Optional extracted caption near the figure.
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    Exports:
+      type: object
+      additionalProperties: false
+      required: [annotated_image_path]
+      properties:
+        annotated_image_path:
+          type: string
+          nullable: true
+          description: >
+            Relative path to an annotated preview image under /outputs/<request_id>/annotated.png.
+            Must be non-null only when return_annotated=true and store_outputs=true.
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
+    ValidationErrorResponse:
+      type: object
+      description: FastAPI/Starlette-style validation error response
+      additionalProperties: true
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
