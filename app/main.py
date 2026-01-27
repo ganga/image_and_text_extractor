@@ -1,7 +1,11 @@
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import FileResponse
+import uuid
+import time
+from io import BytesIO
+from PIL import Image
 
 APP_TITLE = "Book Screenshot Extraction API"
 APP_VERSION = "0.1.0"
@@ -30,3 +34,39 @@ def openapi_yaml():
         filename="openapi.yaml",
     )
 
+@app.post("/extract")
+async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True), return_annotated: bool = Form(True), ocr_engine: str = Form("paddle")):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+    image_bytes = await file.read()
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            width, height = img.size
+            if width <= 0 or height <= 0:
+                raise ValueError("Invalid image dimensions")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image file.")
+
+    # 4. Minimal response (contract-compliant)
+    return {
+        "meta": {
+            "request_id": str(uuid.uuid4()),
+            "image": {
+                "width": width,
+                "height": height
+            },
+            "timings_ms": {
+                "preprocess": 0,
+                "layout": 0,
+                "ocr": 0,
+                "crop": 0
+            }
+        },
+        "blocks": [],
+        "figures": [],
+        "exports": {
+            "annotated_image_path": None
+        }
+    }
+
+    return {"status": "ok"}
