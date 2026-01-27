@@ -3,6 +3,10 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      - OUTPUT_DIR=/shared_outputs
+    volumes:
+      - shared_outputs:/shared_outputs
     restart: unless-stopped
 
   tests:
@@ -12,7 +16,13 @@ services:
     working_dir: /work
     volumes:
       - ./:/work
+      - shared_outputs:/shared_outputs
+    environment:
+      - OUTPUT_DIR=/shared_outputs
     command: >
       sh -c "pip install --no-cache-dir -r requirements-dev.txt &&
              pytest -q"
+
+volumes:
+  shared_outputs:
 

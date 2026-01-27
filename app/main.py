@@ -4,6 +4,7 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 import uuid
 import time
+import os
 from io import BytesIO
 from PIL import Image
 
@@ -38,6 +39,11 @@ def openapi_yaml():
 async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True), return_annotated: bool = Form(True), ocr_engine: str = Form("paddle")):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+    request_id = str(uuid.uuid4())
+    OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/shared_outputs")).resolve()
+    if store_outputs:
+        request_dir = OUTPUT_DIR / request_id
+        request_dir.mkdir(parents=True, exist_ok=True)
     image_bytes = await file.read()
     try:
         with Image.open(BytesIO(image_bytes)) as img:
@@ -47,10 +53,16 @@ async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True),
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file.")
 
+    annotated_path = None
+    if store_outputs and return_annotated:
+        annotated_file = request_dir / "annotated.png"
+        annotated_file.write_bytes(b"...")
+        annotated_path = f"/outputs/{request_id}/annotated.png"
+
     # 4. Minimal response (contract-compliant)
     return {
         "meta": {
-            "request_id": str(uuid.uuid4()),
+            "request_id": request_id,
             "image": {
                 "width": width,
                 "height": height
@@ -65,7 +77,7 @@ async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True),
         "blocks": [],
         "figures": [],
         "exports": {
-            "annotated_image_path": None
+            "annotated_image_path": annotated_path
         }
     }
 

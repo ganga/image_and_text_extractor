@@ -1,6 +1,8 @@
 import base64
 import re
 import httpx
+import os
+from pathlib import Path
 
 BASE_URL = "http://api:8000"
 
@@ -57,4 +59,32 @@ def test_extract_happy_path_contract_minimum():
 
     # store_outputs=false => annotated must be null even if return_annotated=true
     assert body["exports"]["annotated_image_path"] is None
+
+def test_annotated_file_created_when_requested(tmp_path, monkeypatch):
+    # Force outputs into temp dir
+    output_dir = Path(os.getenv("OUTPUT_DIR", "/shared_outputs"))
+    img = _tiny_png_bytes()
+    files = {"file": ("page.png", img, "image/png")}
+    data = {
+        "store_outputs": "true",
+        "return_annotated": "true",
+        "ocr_engine": "paddle"
+    }
+
+    r = httpx.post(f"{BASE_URL}/extract", files=files, data=data, timeout=30)
+    assert r.status_code == 200
+
+    body = r.json()
+    annotated_path = body["exports"]["annotated_image_path"]
+
+    assert annotated_path is not None
+    assert annotated_path.startswith("/outputs/")
+    assert annotated_path.endswith("annotated.png")
+
+    # Map URL path to filesystem path
+    parts = annotated_path.strip("/").split("/")   # ["outputs", "<request_id>", "annotated.png"]
+    request_id = parts[1]
+    fs_path = output_dir / request_id / "annotated.png"
+    assert fs_path.exists()
+    assert fs_path.is_file()
 
