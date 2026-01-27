@@ -5,3 +5,14 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
+  tests:
+    image: python:3.11-slim
+    depends_on:
+      - api
+    working_dir: /work
+    volumes:
+      - ./:/work
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements-dev.txt &&
+             pytest -q"
+
