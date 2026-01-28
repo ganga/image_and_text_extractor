@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 import uuid
 import time
 import os
@@ -19,6 +20,8 @@ app = FastAPI(
     version=APP_VERSION,
     description="Contract-first backend. Spec is served at /openapi.yaml",
 )
+
+app.mount("/outputs", StaticFiles(directory=str(os.getenv('OUTPUT_DIR'))), name="outputs")
 
 @app.get("/health", tags=["system"])
 def health():
@@ -41,9 +44,6 @@ async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True),
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
     request_id = str(uuid.uuid4())
     OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/shared_outputs")).resolve()
-    if store_outputs:
-        request_dir = OUTPUT_DIR / request_id
-        request_dir.mkdir(parents=True, exist_ok=True)
     image_bytes = await file.read()
     try:
         with Image.open(BytesIO(image_bytes)) as img:
@@ -54,10 +54,15 @@ async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True),
         raise HTTPException(status_code=400, detail="Invalid image file.")
 
     annotated_path = None
+    request_dir = OUTPUT_DIR / request_id
+    request_dir.mkdir(parents=True, exist_ok=True)
     if store_outputs and return_annotated:
         annotated_file = request_dir / "annotated.png"
         annotated_file.write_bytes(b"...")
         annotated_path = f"/outputs/{request_id}/annotated.png"
+    if store_outputs:
+        input_path = request_dir / f"input_{file.filename or 'image'}"
+        input_path.write_bytes(image_bytes)
 
     # 4. Minimal response (contract-compliant)
     return {

@@ -88,3 +88,42 @@ def test_annotated_file_created_when_requested(tmp_path, monkeypatch):
     assert fs_path.exists()
     assert fs_path.is_file()
 
+
+def test_input_image_saved_when_store_outputs_true():
+    output_dir = Path(os.getenv("OUTPUT_DIR", "/shared_outputs"))
+
+    img = _tiny_png_bytes()
+    files = {"file": ("page.png", img, "image/png")}
+    data = {
+        "store_outputs": "true",
+        "return_annotated": "false",
+        "ocr_engine": "paddle"
+    }
+
+    r = httpx.post(f"{BASE_URL}/extract", files=files, data=data, timeout=30)
+    assert r.status_code == 200
+
+    body = r.json()
+    request_id = body["meta"]["request_id"]
+
+    input_image_path = output_dir / request_id / "input_page.png"
+
+    assert input_image_path.exists()
+    assert input_image_path.is_file()
+
+def test_annotated_image_url_is_served():
+    img = _tiny_png_bytes()
+    files = {"file": ("page.png", img, "image/png")}
+    data = {"store_outputs": "true", "return_annotated": "true", "ocr_engine": "paddle"}
+
+    r = httpx.post(f"{BASE_URL}/extract", files=files, data=data, timeout=30)
+    assert r.status_code == 200
+
+    body = r.json()
+    annotated_path = body["exports"]["annotated_image_path"]
+    assert annotated_path is not None
+
+    r2 = httpx.get(f"{BASE_URL}{annotated_path}", timeout=30)
+    assert r2.status_code == 200
+    assert r2.headers["content-type"].startswith("image/")
+    assert len(r2.content) > 0
