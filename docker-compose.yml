@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
   tests:
-    image: python:3.11-slim
+    build: .
     depends_on:
       - api
     working_dir: /work
@@ -19,10 +19,12 @@ services:
       - shared_outputs:/shared_outputs
     environment:
       - OUTPUT_DIR=/shared_outputs
+      - PYTHONPATH=/work
     command: >
       sh -c "pip install --no-cache-dir -r requirements-dev.txt &&
              pytest -q"
 
 volumes:
   shared_outputs:
+
 

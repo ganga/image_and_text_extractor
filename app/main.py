@@ -14,6 +14,7 @@ APP_VERSION = "0.1.0"
 
 # Resolve openapi.yaml from project root (mounted into container)
 SPEC_PATH = Path(__file__).resolve().parents[1] / "openapi.yaml"
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/shared_outputs")).resolve()
 
 app = FastAPI(
     title=APP_TITLE,
@@ -21,7 +22,10 @@ app = FastAPI(
     description="Contract-first backend. Spec is served at /openapi.yaml",
 )
 
-app.mount("/outputs", StaticFiles(directory=str(os.getenv('OUTPUT_DIR'))), name="outputs")
+# Ensure the output directory exists
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 
 @app.get("/health", tags=["system"])
 def health():
@@ -38,13 +42,23 @@ def openapi_yaml():
         filename="openapi.yaml",
     )
 
+from app.services.extraction import get_extraction_service
+
 @app.post("/extract")
-async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True), return_annotated: bool = Form(True), ocr_engine: str = Form("paddle")):
+async def extract(
+    file: UploadFile = File(...),
+    store_outputs: bool = Form(True), 
+    return_annotated: bool = Form(True), 
+    ocr_engine: str = Form("paddle")
+):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+    
     request_id = str(uuid.uuid4())
-    OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/shared_outputs")).resolve()
+    # OUTPUT_DIR is now a global constant
     image_bytes = await file.read()
+    
+    # Validate image
     try:
         with Image.open(BytesIO(image_bytes)) as img:
             width, height = img.size
@@ -53,37 +67,28 @@ async def extract(file: UploadFile = File(...),store_outputs: bool = Form(True),
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file.")
 
-    annotated_path = None
     request_dir = OUTPUT_DIR / request_id
-    request_dir.mkdir(parents=True, exist_ok=True)
-    if store_outputs and return_annotated:
-        annotated_file = request_dir / "annotated.png"
-        annotated_file.write_bytes(b"...")
-        annotated_path = f"/outputs/{request_id}/annotated.png"
     if store_outputs:
+        request_dir.mkdir(parents=True, exist_ok=True)
         input_path = request_dir / f"input_{file.filename or 'image'}"
         input_path.write_bytes(image_bytes)
 
-    # 4. Minimal response (contract-compliant)
-    return {
-        "meta": {
-            "request_id": request_id,
-            "image": {
-                "width": width,
-                "height": height
-            },
-            "timings_ms": {
-                "preprocess": 0,
-                "layout": 0,
-                "ocr": 0,
-                "crop": 0
-            }
-        },
-        "blocks": [],
-        "figures": [],
-        "exports": {
-            "annotated_image_path": annotated_path
-        }
-    }
+    try:
+        service = get_extraction_service()
+        response = service.run_extraction(
+            image_bytes=image_bytes, 
+            request_id=request_id, 
+            output_dir=request_dir if store_outputs else None, 
+            store_outputs=store_outputs, 
+            return_annotated=return_annotated
+        )
+        return response
+    except Exception as e:
+        # In production, log generic error and return 500
+        print(f"Extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
     return {"status": "ok"}

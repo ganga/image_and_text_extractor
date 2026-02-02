@@ -8,3 +8,6 @@ docker compose down
 #Inspect volume directly
 docker run --rm -v image_and_text_extractor_shared_outputs:/shared_outputs alpine \
   sh -lc "find /shared_outputs -maxdepth 2 -type f -print"
+
+docker compose up --build --abort-on-container-exit --exit-code-from tests
+
