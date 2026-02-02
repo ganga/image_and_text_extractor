@@ -2,8 +2,11 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.9
 pillow==11.1.0
-paddlepaddle==2.6.2
-paddleocr==2.7.3
+paddlepaddle==2.6.2; python_version < "3.13"
+paddlepaddle; python_version >= "3.13"
+paddleocr>=2.7.3,<2.8.0
 opencv-python-headless==4.9.0.80
 numpy<2.0.0
+reportlab==4.1.0
+standard-imghdr; python_version >= "3.13"
 

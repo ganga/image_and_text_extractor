@@ -42,6 +42,7 @@ def openapi_yaml():
         filename="openapi.yaml",
     )
 
+from app.services.pdf_service import get_pdf_service
 from app.services.extraction import get_extraction_service
 
 @app.post("/extract")
@@ -49,13 +50,13 @@ async def extract(
     file: UploadFile = File(...),
     store_outputs: bool = Form(True), 
     return_annotated: bool = Form(True), 
-    ocr_engine: str = Form("paddle")
+    ocr_engine: str = Form("paddle"),
+    generate_pdf: bool = Form(False)
 ):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
     
     request_id = str(uuid.uuid4())
-    # OUTPUT_DIR is now a global constant
     image_bytes = await file.read()
     
     # Validate image
@@ -73,20 +74,33 @@ async def extract(
         input_path = request_dir / f"input_{file.filename or 'image'}"
         input_path.write_bytes(image_bytes)
 
+    response_data = None
     try:
         service = get_extraction_service()
-        response = service.run_extraction(
+        response_data = service.run_extraction(
             image_bytes=image_bytes, 
             request_id=request_id, 
             output_dir=request_dir if store_outputs else None, 
             store_outputs=store_outputs, 
             return_annotated=return_annotated
         )
-        return response
     except Exception as e:
         # In production, log generic error and return 500
         print(f"Extraction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    if generate_pdf and store_outputs:
+        try:
+            pdf_service = get_pdf_service()
+            pdf_path = request_dir / "output.pdf"
+            pdf_service.create_pdf(response_data["blocks"], pdf_path)
+            response_data["exports"]["pdf_path"] = f"/outputs/{request_id}/output.pdf"
+        except Exception as e:
+            print(f"PDF Generation failed: {e}")
+            # We don't fail the whole request, just log it or add error to response
+            response_data["errors"] = response_data.get("errors", []) + [f"PDF generation failed: {str(e)}"]
+
+    return response_data
 
 
 
